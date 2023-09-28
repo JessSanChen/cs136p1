@@ -13,11 +13,14 @@ from messages import Upload, Request
 from util import even_split
 from peer import Peer
 
-class g41Std(Peer):
+class g41Tyrant(Peer):
     def post_init(self):
         print(("post_init(): %s here!" % self.id))
         self.m = 4
         self.optimistic_peer = None
+        self.alpha = 0.2
+        self.gamma = 0.1
+        self.du = dict()
         
     
     def requests(self, peers, history):
@@ -90,6 +93,8 @@ class g41Std(Peer):
             chosen = []
             bws = []
         else:
+            logging.debug("Still here: uploading to a random peer")
+        
             # estimate d_i
             ### for first round or two, initialize d_1 as something reasonable
             ### case 1: peer has never unblocked us before.
@@ -103,40 +108,62 @@ class g41Std(Peer):
             # keep going until run out of bandwidth (dump remaining on last person)
             # every time, the # ppl unblocked may vary
 
-            # store requesters. {peer_i: {"d": d, "u": u}}
-            requesters = {}
-            for request in requests:
-                requesters[request.id] = dict()
+            # find which peers have unblocked before, and # blocks given most recently
+            # {peer_id: {"round": most_recent_round_num, "blocks": #_blocks}}
+            unblockers = dict()
+            for round in range(len(history.downloads)):
+                for download in history.downloads[round]:
+                    unblockers[download.from_id] = {"round": round, "blocks": download.blocks}
 
-            # for first 2 rounds, just initialize
-            if round < 3:
-                for id in list(requesters):
-                    requesters[id]["d"] = 8
-                    requesters[id]["u"] = 8 # BIG ASSUMPTION
-            else:
-                # find which peers have unblocked before, and # blocks given most recently
-                # {peer_id: {"round": most_recent_round_num, "blocks": #_blocks}}
-                unblockers = dict()
-                for round in range(history.downloads):
-                    for download in history.downloads[round]:
-                        unblockers[download.from_id] = {"round": round, "blocks": download.blocks}
+            # unblocked in the previous round only (for u estimate)
+            recent_unblockers = {peer_id: value for peer_id, value in unblockers.items() if value['round'] == round - 1}
+
                 
-                for peer in peers:
+            # store ALL PEERS. {peer_i: {"d": d, "u": u}}
+            for peer in peers:
+                if peer not in self.du:
+                    self.du[peer.id] = dict()
+                    # initialize here? or do we count rounds
+                    self.du[peer.id]["d"] = 8
+                    self.du[peer.id]["u"] = 8 # BIG ASSUMPTION
+                else:
+                    # estimate d
                     if peer not in unblockers: # peer i has never unblocked us before
                         d_i = (len(list(peer.available_pieces))*self.conf.blocks_per_piece) / (round * 4)
                     else: # has unblocked before
                         d_i = unblockers[peer.id]["blocks"]
-                    requesters[peer.id]["d"] = d_i
+                    self.du[peer.id]["d"] = d_i
+                    # estimate u
+                    if peer.id in recent_unblockers: # unblocked us last round
+                        self.du[peer.id] = self.du[peer.id]*(1-self.gamma)
+                    else: # did not unblock us, and we uploaded to them
+                        if peer.id in [upload.to_id for upload in history.uploads[round-1]]:
+                            self.du[peer.id] = self.du[peer.id]*(1+self.alpha)
+            
+            # calculate d/u ratios
+            for peer in list(self.du.keys()):
+                self.du[peer]["du"] = self.du[peer]["d"]/self.du[peer]["u"]
+            # sort in a list
+            sorted_peers = sorted(self.du.keys(), key=lambda x: self.du[x]['du'], reverse=True)
 
-
-
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(chosen))
+            # determine upload bandwidths based on ratios
+            # u_is must sum to m
+            i = 0 # peer i
+            u_sum = self.du[sorted_peers[i]]["u"] # total upload used so far
+            chosen = [] # list of tuples (peer_id, bw)
+            while u_sum < self.up_bw and i < len(sorted_peers): # only add if adding would not exceed
+                chosen.append((sorted_peers[i], self.du[sorted_peers[i]]["u"]))
+                remainder = self.up_bw - u_sum
+                i += 1
+                u_sum += self.du[sorted_peers[i]]["u"]
+            # allocate remainder to yet-to-be-added peer
+            if i < len(sorted_peers):
+                chosen.append((sorted_peers[i], remainder))
+            # if there is extra bandwidth, don't do anything????
+                
 
         # create actual uploads out of the list of peer ids and bandwidths
         uploads = [Upload(self.id, peer_id, bw)
-                   for (peer_id, bw) in zip(chosen, bws)]
+                   for (peer_id, bw) in chosen]
             
         return uploads
