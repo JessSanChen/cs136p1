@@ -13,25 +13,16 @@ from messages import Upload, Request
 from util import even_split
 from peer import Peer
 
-class g41Tyrant(Peer):
+class g41Std(Peer):
     def post_init(self):
         print(("post_init(): %s here!" % self.id))
-        self.dummy_state = dict()
-        self.dummy_state["cake"] = "lie"
+        self.m = 4
+        self.optimistic_peer = None
+        
     
     def requests(self, peers, history):
-        """
-        peers: available info about the peers (who has what pieces)
-        history: what's happened so far as far as this peer can see
-
-        returns: a list of Request() objects
-
-        This will be called after update_pieces() with the most recent state.
-        """
-        needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece
+        needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece 
         needed_pieces = list(filter(needed, list(range(len(self.pieces)))))
-        np_set = set(needed_pieces)  # sets support fast intersection ops.
-
 
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
@@ -44,30 +35,39 @@ class g41Tyrant(Peer):
         logging.debug("look at the AgentHistory class in history.py for details")
         logging.debug(str(history))
 
-        requests = []   # We'll put all the things we want here
-        # Symmetry breaking is good...
-        random.shuffle(needed_pieces)
         
-        # Sort peers by id.  This is probably not a useful sort, but other 
-        # sorts might be useful
-        peers.sort(key=lambda p: p.id)
-        # request all available pieces from all peers!
-        # (up to self.max_requests from each)
-        for peer in peers:
-            av_set = set(peer.available_pieces)
-            isect = av_set.intersection(np_set)
-            n = min(self.max_requests, len(isect))
-            # More symmetry breaking -- ask for random pieces.
-            # This would be the place to try fancier piece-requesting strategies
-            # to avoid getting the same thing from multiple peers at a time.
-            for piece_id in random.sample(sorted(isect), n):
-                # aha! The peer has this piece! Request it.
-                # which part of the piece do we need next?
-                # (must get the next-needed blocks in order)
-                start_block = self.pieces[piece_id]
-                r = Request(self.id, peer.id, piece_id, start_block)
-                requests.append(r)
+        random.shuffle(needed_pieces)
 
+        # go thru all needed_pieces, log availability
+        dict_prefs = dict()
+        for piece in needed_pieces:
+            for peer in peers:
+                if piece in peer.available_pieces:
+                    if piece in dict_prefs.keys():
+                        dict_prefs[piece] += 1
+                    else:
+                        dict_prefs[piece] = 1
+        
+        # sort dictionary by the number of people that have an item (rarest first)
+        order = list(dict(sorted(dict_prefs.items(), key=lambda x: x[1])).keys())
+
+        requests = []
+
+        random.shuffle(peers)
+
+        for peer in peers:
+            # make sure to randomize iset!!
+            available_list = list(peer.available_pieces)
+            isect = [piece for piece in available_list if piece in needed_pieces]
+            # print("list of available pieces of a peer: ", available_list)
+            random.shuffle(isect)
+            sorted_by_pref = sorted(isect, key=lambda x: order.index(x) if x in order else len(order))
+            n = min(self.max_requests, len(sorted_by_pref))
+            for i in range(n):
+                start_block = self.pieces[sorted_by_pref[i]]
+                r = Request(self.id, peer.id, sorted_by_pref[i], start_block)
+                requests.append(r)
+        
         return requests
 
     def uploads(self, requests, peers, history):
@@ -84,19 +84,51 @@ class g41Tyrant(Peer):
         round = history.current_round()
         logging.debug("%s again.  It's round %d." % (
             self.id, round))
-        # One could look at other stuff in the history too here.
-        # For example, history.downloads[round-1] (if round != 0, of course)
-        # has a list of Download objects for each Download to this peer in
-        # the previous round.
 
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
             chosen = []
             bws = []
         else:
-            logging.debug("Still here: uploading to a random peer")
-            # change my internal state for no reason
-            self.dummy_state["cake"] = "pie"
+            # estimate d_i
+            ### for first round or two, initialize d_1 as something reasonable
+            ### case 1: peer has never unblocked us before.
+            ### case 2: has unblocked us before.
+            # estimate u_i
+            ### initialize u_1 to est min capacity that ppl can have
+            ### case 1: if we unblock them, but they don't unblock us.
+            ### case 2: if they unblock us.
+            # rank all requesters by decreasing order of d_i/u_i
+            # help in proportion of d_i/u_i
+            # keep going until run out of bandwidth (dump remaining on last person)
+            # every time, the # ppl unblocked may vary
+
+            # store requesters. {peer_i: {"d": d, "u": u}}
+            requesters = {}
+            for request in requests:
+                requesters[request.id] = dict()
+
+            # for first 2 rounds, just initialize
+            if round < 3:
+                for id in list(requesters):
+                    requesters[id]["d"] = 8
+                    requesters[id]["u"] = 8 # BIG ASSUMPTION
+            else:
+                # find which peers have unblocked before, and # blocks given most recently
+                # {peer_id: {"round": most_recent_round_num, "blocks": #_blocks}}
+                unblockers = dict()
+                for round in range(history.downloads):
+                    for download in history.downloads[round]:
+                        unblockers[download.from_id] = {"round": round, "blocks": download.blocks}
+                
+                for peer in peers:
+                    if peer not in unblockers: # peer i has never unblocked us before
+                        d_i = (len(list(peer.available_pieces))*self.conf.blocks_per_piece) / (round * 4)
+                    else: # has unblocked before
+                        d_i = unblockers[peer.id]["blocks"]
+                    requesters[peer.id]["d"] = d_i
+
+
 
             request = random.choice(requests)
             chosen = [request.requester_id]
