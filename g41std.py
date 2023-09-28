@@ -13,25 +13,23 @@ from messages import Upload, Request
 from util import even_split
 from peer import Peer
 
-class g41Std:
+class g41Std(Peer):
     def post_init(self):
+        # self.dummy_state = dict()
+        # self.dummy_state["cake"] = "lie"
         print(("post_init(): %s here!" % self.id))
-        self.dummy_state = dict()
-        self.dummy_state["cake"] = "lie"
+        
+        # inherits from Peer class, which takes care of most properties
+        # but needs to do post_init() stuff?
+
+        self.m = 4
+        self.optimistic_peer = None
+        
     
     def requests(self, peers, history):
-        """
-        peers: available info about the peers (who has what pieces)
-        history: what's happened so far as far as this peer can see
-
-        returns: a list of Request() objects
-
-        This will be called after update_pieces() with the most recent state.
-        """
         needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece
         needed_pieces = list(filter(needed, list(range(len(self.pieces)))))
         np_set = set(needed_pieces)  # sets support fast intersection ops.
-
 
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
@@ -44,30 +42,34 @@ class g41Std:
         logging.debug("look at the AgentHistory class in history.py for details")
         logging.debug(str(history))
 
-        requests = []   # We'll put all the things we want here
-        # Symmetry breaking is good...
-        random.shuffle(needed_pieces)
-        
-        # Sort peers by id.  This is probably not a useful sort, but other 
-        # sorts might be useful
-        peers.sort(key=lambda p: p.id)
-        # request all available pieces from all peers!
-        # (up to self.max_requests from each)
+        # create a dictionary of key value pairs where the key is the piece, 
+        # the value is the number of agents that have that piece
+        dict_prefs = {}
+        for piece in needed_pieces:
+            dict_prefs[piece] = 0
         for peer in peers:
-            av_set = set(peer.available_pieces)
-            isect = av_set.intersection(np_set)
-            n = min(self.max_requests, len(isect))
-            # More symmetry breaking -- ask for random pieces.
-            # This would be the place to try fancier piece-requesting strategies
-            # to avoid getting the same thing from multiple peers at a time.
-            for piece_id in random.sample(sorted(isect), n):
-                # aha! The peer has this piece! Request it.
-                # which part of the piece do we need next?
-                # (must get the next-needed blocks in order)
-                start_block = self.pieces[piece_id]
-                r = Request(self.id, peer.id, piece_id, start_block)
-                requests.append(r)
+            for piece in peer.available_pieces:
+                if piece in dict_prefs:
+                    dict_prefs[piece] += 1
+                    
 
+        # sort dictionary by the number of people that have an item (rarest first)
+        dict_prefs_sorted = dict(sorted([items for items in dict_prefs.items() if items[1] > 0], key=lambda x: x[1]))
+        order = list(dict_prefs_sorted.keys())
+
+        requests = []
+
+        for peer in peers:
+            # make sure to randomize iset!!
+            # change to list?? set not subscriptable
+            random.shuffle(list(peer.available_pieces))
+            sorted_by_pref = [piece for x in order for piece in peer.available_pieces if piece[0] == x]
+            n = min(self.max_requests, len(sorted_by_pref))
+            for i in range(n):
+                start_block = self.pieces[sorted_by_pref[i]]
+                r = Request(self.id, peer.id, sorted_by_pref[i], start_block)
+                requests.append(r)
+        
         return requests
 
     def uploads(self, requests, peers, history):
@@ -95,12 +97,39 @@ class g41Std:
             bws = []
         else:
             logging.debug("Still here: uploading to a random peer")
-            # change my internal state for no reason
-            self.dummy_state["cake"] = "pie"
+            
+            # order interested peers in decreasing avg download rate in last 20 seconds
+            # break ties at random
+            # exclude peers that have not sent data
+            # m-1 interested peers unblocked via regular unblock
+            # reference client divides its upload capacity (bandwidth) equally into each of m slots
+            # every 3 rounds, optimistically unblock interested (not chosen) peer
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
+            # request = random.choice(requests)
+            # chosen = [request.requester_id]
+            # # Evenly "split" my upload bandwidth among the one chosen requester
+            # bws = even_split(self.up_bw, len(chosen))
+
+            # history.downloads[round-1] is list of download objects
+
+            # initialize interested peers
+            interested_peers = dict()
+            for req in requests:
+                interested_peers[req.requester_id] = 0
+            # log all downloads from past 2 rounds
+            for download in history.downloads[round-1] + history.downloads[round-2]:
+                if download.from_id in interested_peers:
+                    interested_peers[download.from_id] += 1
+            # sort by decr avg download; exclude those with 0 downloads
+            interested_peers = dict(sorted(interested_peers.items(), key = lambda x: x[1], reverse = True))
+            interested_peers = {x:y for x,y in interested_peers.items() if y != 0}
+            # take the first m-1 for regular unblock
+            chosen = interested_peers.keys[:self.m]
+            # optimistic unblock
+            if round % 3 == 0:
+                self.optimistic_peer = random.choice(interested_peers.keys[self.m:])
+            chosen.append(self.optimistic_peer)
+            # evenly split
             bws = even_split(self.up_bw, len(chosen))
 
         # create actual uploads out of the list of peer ids and bandwidths
