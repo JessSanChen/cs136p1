@@ -141,10 +141,13 @@ class g41Tyrant(Peer):
                             self.du[peer.id] = self.du[peer.id]*(1+self.alpha)
             
             # calculate d/u ratios
-            for peer in list(self.du.keys()):
+            keys_list = list(self.du.keys())
+            for peer in keys_list:
                 self.du[peer]["du"] = self.du[peer]["d"]/self.du[peer]["u"]
             # sort in a list
-            sorted_peers = sorted(self.du.keys(), key=lambda x: self.du[x]['du'], reverse=True)
+            random.shuffle(keys_list)
+            sorted_peers = sorted(keys_list, key=lambda x: self.du[x]['du'], reverse=True)
+            # sorted_peers = sorted(self.du.keys(), key=lambda x: self.du[x]['du'], reverse=True)
 
             # determine upload bandwidths based on ratios
             # u_is must sum to m
