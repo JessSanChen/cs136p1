@@ -147,21 +147,24 @@ class g41Std(Peer):
             # take the first m-1 for regular unblock
             if len(reciprocated_lst) < self.m - 1:
                 chosen = reciprocated_lst
-                # if not enough of the requesters
-                # make sure you don't append more than there are requests
-                empty_slots = min(len(other_reqs), self.m - 1 - len(reciprocated_lst))
-                random.shuffle(other_reqs)
-                for i in range(empty_slots):
-                    filler = other_reqs.pop() # takes it out from other_reqs; unique requestors
-                    chosen.append(filler)
+                # # if not enough of the requesters
+                # # make sure you don't append more than there are requests
+                # empty_slots = min(len(other_reqs), self.m - 1 - len(reciprocated_lst))
+                # random.shuffle(other_reqs)
+                # for i in range(empty_slots):
+                #     filler = other_reqs.pop() # takes it out from other_reqs; unique requestors
+                #     chosen.append(filler)  
             else:
                 chosen = reciprocated_lst[:self.m-1]
+
             
             # add the optimistic peer
             if self.optimistic_peer is None and len(other_reqs) > 0:
                 self.optimistic_peer = random.choice(other_reqs)
             if self.optimistic_peer is not None:
                 chosen.append(self.optimistic_peer)
+
+            print("chosen: ", chosen)
 
             # evenly split
             bws = even_split(self.up_bw, len(chosen))
