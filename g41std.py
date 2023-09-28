@@ -27,11 +27,9 @@ class g41Std(Peer):
         
     
     def requests(self, peers, history):
-        needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece
+        needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece 
         needed_pieces = list(filter(needed, list(range(len(self.pieces)))))
-        np_set = set(needed_pieces)  # sets support fast intersection ops.
-
-        print("self.pieces blocks: ", self.pieces)
+        # np_set = set(needed_pieces)  # sets support fast intersection ops.
 
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
@@ -45,8 +43,8 @@ class g41Std(Peer):
         logging.debug(str(history))
 
         # go thru all needed_pieces, log availability
-        # print("peers: ", [peer.available_pieces for peer in peers])
         random.shuffle(needed_pieces)
+
         dict_prefs = dict()
         for piece in needed_pieces:
             for peer in peers:
@@ -56,12 +54,8 @@ class g41Std(Peer):
                     else:
                         dict_prefs[piece] = 1
         
-        # print("piece frequencies: ", dict_prefs)
-
         # sort dictionary by the number of people that have an item (rarest first)
         order = list(dict(sorted(dict_prefs.items(), key=lambda x: x[1])).keys())
-
-        # print("order: ", order)
 
         requests = []
 
@@ -70,11 +64,10 @@ class g41Std(Peer):
         for peer in peers:
             # make sure to randomize iset!!
             available_list = list(peer.available_pieces)
+            isect = [piece for piece in available_list if piece in needed_pieces]
             # print("list of available pieces of a peer: ", available_list)
-            random.shuffle(available_list)
-            # srt = {b: i for i, b in enumerate(order)}
-            sorted_by_pref = sorted(available_list, key=lambda x: order.index(x) if x in order else len(order))
-            # print("available pieces, sorted by rarity: ", sorted_by_pref)
+            random.shuffle(isect)
+            sorted_by_pref = sorted(isect, key=lambda x: order.index(x) if x in order else len(order))
             n = min(self.max_requests, len(sorted_by_pref))
             for i in range(n):
                 start_block = self.pieces[sorted_by_pref[i]]
