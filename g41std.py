@@ -31,6 +31,8 @@ class g41Std(Peer):
         needed_pieces = list(filter(needed, list(range(len(self.pieces)))))
         np_set = set(needed_pieces)  # sets support fast intersection ops.
 
+        print("self.pieces blocks: ", self.pieces)
+
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
 
@@ -42,28 +44,37 @@ class g41Std(Peer):
         logging.debug("look at the AgentHistory class in history.py for details")
         logging.debug(str(history))
 
-        # create a dictionary of key value pairs where the key is the piece, 
-        # the value is the number of agents that have that piece
-        dict_prefs = {}
+        # go thru all needed_pieces, log availability
+        # print("peers: ", [peer.available_pieces for peer in peers])
+        random.shuffle(needed_pieces)
+        dict_prefs = dict()
         for piece in needed_pieces:
-            dict_prefs[piece] = 0
-        for peer in peers:
-            for piece in peer.available_pieces:
-                if piece in dict_prefs:
-                    dict_prefs[piece] += 1
-                    
+            for peer in peers:
+                if piece in peer.available_pieces:
+                    if piece in dict_prefs.keys():
+                        dict_prefs[piece] += 1
+                    else:
+                        dict_prefs[piece] = 1
+        
+        # print("piece frequencies: ", dict_prefs)
 
         # sort dictionary by the number of people that have an item (rarest first)
-        dict_prefs_sorted = dict(sorted([items for items in dict_prefs.items() if items[1] > 0], key=lambda x: x[1]))
-        order = list(dict_prefs_sorted.keys())
+        order = list(dict(sorted(dict_prefs.items(), key=lambda x: x[1])).keys())
+
+        # print("order: ", order)
 
         requests = []
 
+        random.shuffle(peers)
+
         for peer in peers:
             # make sure to randomize iset!!
-            # change to list?? set not subscriptable
-            random.shuffle(list(peer.available_pieces))
-            sorted_by_pref = [piece for x in order for piece in peer.available_pieces if piece[0] == x]
+            available_list = list(peer.available_pieces)
+            # print("list of available pieces of a peer: ", available_list)
+            random.shuffle(available_list)
+            # srt = {b: i for i, b in enumerate(order)}
+            sorted_by_pref = sorted(available_list, key=lambda x: order.index(x) if x in order else len(order))
+            # print("available pieces, sorted by rarity: ", sorted_by_pref)
             n = min(self.max_requests, len(sorted_by_pref))
             for i in range(n):
                 start_block = self.pieces[sorted_by_pref[i]]
@@ -112,23 +123,53 @@ class g41Std(Peer):
 
             # history.downloads[round-1] is list of download objects
 
-            # initialize interested peers
-            interested_peers = dict()
-            for req in requests:
-                interested_peers[req.requester_id] = 0
+            requesters = [req.requester_id for req in requests] 
+            
+            # change optimistically unblocked peer if necessary
+            # can fix from mod 3 as necessary later
+            if self.optimistic_peer not in requesters or round % 3 == 0:
+                self.optimistic_peer = None
+
+            # initialize reciprocating peers
+            reciprocated_peers = dict()
             # log all downloads from past 2 rounds
             for download in history.downloads[round-1] + history.downloads[round-2]:
-                if download.from_id in interested_peers:
-                    interested_peers[download.from_id] += 1
-            # sort by decr avg download; exclude those with 0 downloads
-            interested_peers = dict(sorted(interested_peers.items(), key = lambda x: x[1], reverse = True))
-            interested_peers = {x:y for x,y in interested_peers.items() if y != 0}
+                # check if they have actually requested
+                # exclude optimistic peer
+                if download.from_id in requesters and download.from_id is not self.optimistic_peer: 
+                    if download.from_id in reciprocated_peers:
+                        reciprocated_peers[download.from_id] += 1
+                    else: 
+                        reciprocated_peers[download.from_id] = 1
+
+            # sort by decr avg download
+            reciprocated_peers = dict(sorted(reciprocated_peers.items(), key = lambda x: x[1], reverse = True))
+
+            # if no reciprocated peers
+            # if opt unblocked peer does not unblock on a round, then must change
+            # not most relevant
+            
+            reciprocated_lst = list(reciprocated_peers.keys())
+            other_reqs = [req for req in requesters if req not in reciprocated_lst]
             # take the first m-1 for regular unblock
-            chosen = interested_peers.keys[:self.m]
-            # optimistic unblock
-            if round % 3 == 0:
-                self.optimistic_peer = random.choice(interested_peers.keys[self.m:])
-            chosen.append(self.optimistic_peer)
+            if len(reciprocated_lst) < self.m - 1:
+                chosen = reciprocated_lst
+                # if not enough of the requesters
+                # make sure you don't append more than there are requests
+                empty_slots = min(len(other_reqs), self.m - 1 - len(reciprocated_lst))
+                random.shuffle(other_reqs)
+                for i in range(empty_slots):
+                    filler = other_reqs.pop() # takes it out from other_reqs; unique requestors
+                    chosen.append(filler)
+            else:
+                chosen = reciprocated_lst[:self.m-1]
+            
+            # add the optimistic peer
+            if self.optimistic_peer is None and len(other_reqs) > 0:
+                self.optimistic_peer = random.choice(other_reqs)
+            if self.optimistic_peer is not None:
+                chosen.append(self.optimistic_peer)
+
             # evenly split
             bws = even_split(self.up_bw, len(chosen))
 
