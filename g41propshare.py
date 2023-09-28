@@ -20,18 +20,9 @@ class g41PropShare(Peer):
         self.dummy_state["cake"] = "lie"
     
     def requests(self, peers, history):
-        """
-        peers: available info about the peers (who has what pieces)
-        history: what's happened so far as far as this peer can see
-
-        returns: a list of Request() objects
-
-        This will be called after update_pieces() with the most recent state.
-        """
-        needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece
+        needed = lambda i: self.pieces[i] < self.conf.blocks_per_piece 
         needed_pieces = list(filter(needed, list(range(len(self.pieces)))))
-        np_set = set(needed_pieces)  # sets support fast intersection ops.
-
+        # np_set = set(needed_pieces)  # sets support fast intersection ops.
 
         logging.debug("%s here: still need pieces %s" % (
             self.id, needed_pieces))
@@ -44,31 +35,40 @@ class g41PropShare(Peer):
         logging.debug("look at the AgentHistory class in history.py for details")
         logging.debug(str(history))
 
-        requests = []   # We'll put all the things we want here
-        # Symmetry breaking is good...
+        # go thru all needed_pieces, log availability
         random.shuffle(needed_pieces)
-        
-        # Sort peers by id.  This is probably not a useful sort, but other 
-        # sorts might be useful
-        peers.sort(key=lambda p: p.id)
-        # request all available pieces from all peers!
-        # (up to self.max_requests from each)
-        for peer in peers:
-            av_set = set(peer.available_pieces)
-            isect = av_set.intersection(np_set)
-            n = min(self.max_requests, len(isect))
-            # More symmetry breaking -- ask for random pieces.
-            # This would be the place to try fancier piece-requesting strategies
-            # to avoid getting the same thing from multiple peers at a time.
-            for piece_id in random.sample(sorted(isect), n):
-                # aha! The peer has this piece! Request it.
-                # which part of the piece do we need next?
-                # (must get the next-needed blocks in order)
-                start_block = self.pieces[piece_id]
-                r = Request(self.id, peer.id, piece_id, start_block)
-                requests.append(r)
 
+        dict_prefs = dict()
+        for piece in needed_pieces:
+            for peer in peers:
+                if piece in peer.available_pieces:
+                    if piece in dict_prefs.keys():
+                        dict_prefs[piece] += 1
+                    else:
+                        dict_prefs[piece] = 1
+        
+        # sort dictionary by the number of people that have an item (rarest first)
+        order = list(dict(sorted(dict_prefs.items(), key=lambda x: x[1])).keys())
+
+        requests = []
+
+        random.shuffle(peers)
+
+        for peer in peers:
+            # make sure to randomize iset!!
+            available_list = list(peer.available_pieces)
+            isect = [piece for piece in available_list if piece in needed_pieces]
+            # print("list of available pieces of a peer: ", available_list)
+            random.shuffle(isect)
+            sorted_by_pref = sorted(isect, key=lambda x: order.index(x) if x in order else len(order))
+            n = min(self.max_requests, len(sorted_by_pref))
+            for i in range(n):
+                start_block = self.pieces[sorted_by_pref[i]]
+                r = Request(self.id, peer.id, sorted_by_pref[i], start_block)
+                requests.append(r)
+        
         return requests
+    
 
     def uploads(self, requests, peers, history):
         """
@@ -89,10 +89,12 @@ class g41PropShare(Peer):
         # has a list of Download objects for each Download to this peer in
         # the previous round.
 
+        
         if len(requests) == 0:
             logging.debug("No one wants my pieces!")
             chosen = []
             bws = []
+            uploads = []
         else:
             logging.debug("Still here: uploading to a random peer")
 
@@ -101,45 +103,42 @@ class g41PropShare(Peer):
             for req in requests:
                 interested_peers[req.requester_id] = 0
 
-            for download in history.download[round - 1]:
+            for download in history.downloads[round - 1]:
                 if download.from_id in interested_peers:
                     interested_peers[download.from_id] += download.blocks
-            
-            def filtering(pair):
-                key, value = pair
-                if value > 0:
-                    return True  # keep pair in the filtered dictionary
-                else:
-                    return False  # filter pair out of the dictionary
-            def inv_filtering(pair):
-                key, value = pair
-                if value == 0:
-                    return True  # keep pair in the filtered dictionary
-                else:
-                    return False  # filter pair out of the dictionary
 
-            prev_downloads = dict(filter(filtering, interested_peers))
-            no_prev_downloads = dict(filter(inv_filtering, interested_peers))
+            prev_downloads = {key : val for key, val in interested_peers.items()
+                   if val > 0}
+            no_prev_downloads = {key : val for key, val in interested_peers.items()
+                   if val == 0}
+           
 
-            if len(prev_downloads) == 0:
-                lucky = random.choice(no_prev_downloads.keys())
+            if len(no_prev_downloads) == len(interested_peers):
+                lucky = random.choice(list(no_prev_downloads.keys()))
                 uploads = [Upload(self.id, lucky, self.up_bw)]
             
             else:
-                chosen = prev_downloads.keys()
-                other = no_prev_downloads.keys()
+                chosen = list(prev_downloads.keys())
+                other = list(no_prev_downloads.keys())
+                bws = []
 
-                for peer in chosen:
-                    proportion = prev_downloads[peer]/(sum(prev_downloads.values()))
-                    bws.append(int(proportion*0.9*(self.up_bw)))
+                if len(prev_downloads) == len(interested_peers):
+                    for peer in chosen:
+                        proportion = (interested_peers[peer])/(sum(list(prev_downloads.values())))
+                        bws.append(int(proportion*(self.up_bw)))
+                else:
+                    for peer in chosen:
+                        proportion = prev_downloads[peer]/(sum(list(prev_downloads.values())))
+                        bws.append(int(proportion*0.9*(self.up_bw)))
+                    
+                    other_rand = random.choice(other)
+                    chosen.append(other_rand)
+                    total_bw = sum(bws)
+                    bws.append(self.up_bw - total_bw)
+
                 
-                other_rand = random.choice(other)
-                chosen.append(other_rand)
-                total_bw = sum(bws)
-                bws.append(self.up_bw - total_bw)
-
                 # create actual uploads out of the list of peer ids and bandwidths
                 uploads = [Upload(self.id, peer_id, bw)
-                    for (peer_id, bw) in zip(chosen, bws)]
+                    for (peer_id, bw) in zip(chosen, bws)]  
                 
         return uploads
