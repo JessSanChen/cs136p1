@@ -161,6 +161,7 @@ class g41Std(Peer):
             # add the optimistic peer
             if self.optimistic_peer is None and len(other_reqs) > 0:
                 self.optimistic_peer = random.choice(other_reqs)
+                
             if self.optimistic_peer is not None:
                 chosen.append(self.optimistic_peer)
 
