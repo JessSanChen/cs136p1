@@ -95,16 +95,51 @@ class g41PropShare(Peer):
             bws = []
         else:
             logging.debug("Still here: uploading to a random peer")
-            # change my internal state for no reason
-            self.dummy_state["cake"] = "pie"
 
-            request = random.choice(requests)
-            chosen = [request.requester_id]
-            # Evenly "split" my upload bandwidth among the one chosen requester
-            bws = even_split(self.up_bw, len(chosen))
+            interested_peers = dict()
 
-        # create actual uploads out of the list of peer ids and bandwidths
-        uploads = [Upload(self.id, peer_id, bw)
-                   for (peer_id, bw) in zip(chosen, bws)]
+            for req in requests:
+                interested_peers[req.requester_id] = 0
+
+            for download in history.download[round - 1]:
+                if download.from_id in interested_peers:
+                    interested_peers[download.from_id] += download.blocks
             
+            def filtering(pair):
+                key, value = pair
+                if value > 0:
+                    return True  # keep pair in the filtered dictionary
+                else:
+                    return False  # filter pair out of the dictionary
+            def inv_filtering(pair):
+                key, value = pair
+                if value == 0:
+                    return True  # keep pair in the filtered dictionary
+                else:
+                    return False  # filter pair out of the dictionary
+
+            prev_downloads = dict(filter(filtering, interested_peers))
+            no_prev_downloads = dict(filter(inv_filtering, interested_peers))
+
+            if len(prev_downloads) == 0:
+                lucky = random.choice(no_prev_downloads.keys())
+                uploads = [Upload(self.id, lucky, self.up_bw)]
+            
+            else:
+                chosen = prev_downloads.keys()
+                other = no_prev_downloads.keys()
+
+                for peer in chosen:
+                    proportion = prev_downloads[peer]/(sum(prev_downloads.values()))
+                    bws.append(int(proportion*0.9*(self.up_bw)))
+                
+                other_rand = random.choice(other)
+                chosen.append(other_rand)
+                total_bw = sum(bws)
+                bws.append(self.up_bw - total_bw)
+
+                # create actual uploads out of the list of peer ids and bandwidths
+                uploads = [Upload(self.id, peer_id, bw)
+                    for (peer_id, bw) in zip(chosen, bws)]
+                
         return uploads

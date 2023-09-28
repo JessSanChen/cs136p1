@@ -13,7 +13,7 @@ from messages import Upload, Request
 from util import even_split
 from peer import Peer
 
-class g41Std(Peer):
+class g41Tyrant(Peer):
     def post_init(self):
         print(("post_init(): %s here!" % self.id))
         self.m = 4
