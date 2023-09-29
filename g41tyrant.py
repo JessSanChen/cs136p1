@@ -124,8 +124,8 @@ class g41Tyrant(Peer):
                 if peer not in self.du:
                     self.du[peer.id] = dict()
                     # initialize here? or do we count rounds
-                    self.du[peer.id]["d"] = 8
-                    self.du[peer.id]["u"] = 8 # BIG ASSUMPTION
+                    self.du[peer.id]["d"] = 64
+                    self.du[peer.id]["u"] = 32 # BIG ASSUMPTION
                 else:
                     # estimate d
                     if peer not in unblockers: # peer i has never unblocked us before
@@ -154,6 +154,7 @@ class g41Tyrant(Peer):
             i = 0 # peer i
             u_sum = self.du[sorted_peers[i]]["u"] # total upload used so far
             chosen = [] # list of tuples (peer_id, bw)
+            remainder = 0
             while u_sum < self.up_bw and i < len(sorted_peers): # only add if adding would not exceed
                 chosen.append((sorted_peers[i], self.du[sorted_peers[i]]["u"]))
                 remainder = self.up_bw - u_sum

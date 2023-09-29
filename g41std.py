@@ -65,7 +65,6 @@ class g41Std(Peer):
             # make sure to randomize iset!!
             available_list = list(peer.available_pieces)
             isect = [piece for piece in available_list if piece in needed_pieces]
-            # print("list of available pieces of a peer: ", available_list)
             random.shuffle(isect)
             sorted_by_pref = sorted(isect, key=lambda x: order.index(x) if x in order else len(order))
             n = min(self.max_requests, len(sorted_by_pref))
