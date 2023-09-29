@@ -140,10 +140,6 @@ class g41Tourney(Peer):
 
             # sort by decr avg download
             reciprocated_peers = dict(sorted(reciprocated_peers.items(), key = lambda x: x[1], reverse = True))
-
-            # if no reciprocated peers
-            # if opt unblocked peer does not unblock on a round, then must change
-            # not most relevant
             
             reciprocated_lst = list(reciprocated_peers.keys())
             other_reqs = [req for req in requesters if req not in reciprocated_lst]
@@ -167,8 +163,6 @@ class g41Tourney(Peer):
                 
             if self.optimistic_peer is not None:
                 chosen.append(self.optimistic_peer)
-
-            print("chosen: ", chosen)
 
             # evenly split
             bws = even_split(self.up_bw, len(chosen))

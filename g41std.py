@@ -164,8 +164,6 @@ class g41Std(Peer):
             if self.optimistic_peer is not None:
                 chosen.append(self.optimistic_peer)
 
-            print("chosen: ", chosen)
-
             # evenly split
             bws = even_split(self.up_bw, len(chosen))
 

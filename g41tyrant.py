@@ -12,6 +12,7 @@ import logging
 from messages import Upload, Request
 from util import even_split
 from peer import Peer
+import math
 
 class g41Tyrant(Peer):
     def post_init(self):
@@ -121,7 +122,7 @@ class g41Tyrant(Peer):
                 
             # store ALL PEERS. {peer_i: {"d": d, "u": u}}
             for peer in peers:
-                if peer not in self.du:
+                if peer not in list(self.du.keys()):
                     self.du[peer.id] = dict()
                     # initialize here? or do we count rounds
                     self.du[peer.id]["d"] = 64
@@ -135,10 +136,10 @@ class g41Tyrant(Peer):
                     self.du[peer.id]["d"] = d_i
                     # estimate u
                     if peer.id in recent_unblockers: # unblocked us last round
-                        self.du[peer.id] = self.du[peer.id]*(1-self.gamma)
+                        self.du[peer.id] = self.du[peer.id]["u"]*(1-self.gamma)
                     else: # did not unblock us, and we uploaded to them
                         if peer.id in [upload.to_id for upload in history.uploads[round-1]]:
-                            self.du[peer.id] = self.du[peer.id]*(1+self.alpha)
+                            self.du[peer.id] = self.du[peer.id]["u"]*(1+self.alpha)
             
             # calculate d/u ratios
             keys_list = list(self.du.keys())
@@ -156,7 +157,7 @@ class g41Tyrant(Peer):
             chosen = [] # list of tuples (peer_id, bw)
             remainder = 0
             while u_sum < self.up_bw and i < len(sorted_peers): # only add if adding would not exceed
-                chosen.append((sorted_peers[i], self.du[sorted_peers[i]]["u"]))
+                chosen.append((sorted_peers[i], math.floor(self.du[sorted_peers[i]]["u"])))
                 remainder = self.up_bw - u_sum
                 i += 1
                 u_sum += self.du[sorted_peers[i]]["u"]
